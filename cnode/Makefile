@@ -2,7 +2,7 @@
 OTPROOT=$(wildcard /opt/erlang/lib/erl_interface-*)
 OTPROOT_LOCAL=$(wildcard /usr/local/Cellar/erlang/20.0/lib/erlang/lib/erl_interface-*)
 
-all:	bin/cnodeserver bin/cnodeclient 
+all:	bin/cnodeserver 
 local:	local/cnodeserver
 
 bin/Elixir.Complex.beam: src/complex.ex
@@ -10,11 +10,11 @@ bin/Elixir.Complex.beam: src/complex.ex
 
 local/%:	src/%.c
 	mkdir -p bin
-	gcc -o -g $@ -I$(OTPROOT_LOCAL)/include -L//usr/lib/x86_64-linux-gnu/ -L$(OTPROOT_LOCAL)/lib src/lamewrapper.c $< -lerl_interface -I./include -lei -lpthread -lmp3lame
+	gcc -o -g $@ -I$(OTPROOT_LOCAL)/include -L//usr/lib/x86_64-linux-gnu/ -L$(OTPROOT_LOCAL)/lib  $< -lerl_interface -I./include -lei -lpthread -lmp3lame
 
 bin/%:	src/%.c
 	mkdir -p bin
-	gcc -ggdb -o  $@ -I$(OTPROOT)/include -L//usr/lib/x86_64-linux-gnu/ -L$(OTPROOT)/lib src/lamewrapper.c $< -lerl_interface -I./include -lei -lpthread -lnsl -lmp3lame
+	gcc -ggdb -o  $@ -I$(OTPROOT)/include -L//usr/lib/x86_64-linux-gnu/ -L$(OTPROOT)/lib  $< -lerl_interface -I./include -lei -lpthread -lnsl -lmp3lame
 
 clean:
 	rm -rf bin

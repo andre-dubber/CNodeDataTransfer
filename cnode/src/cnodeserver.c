@@ -15,6 +15,7 @@
 #define EXCHANGE_BUFSIZE 8192
 
 void test_encode(lame_t lame_config);
+lame_t setup();
 ETERM *process_block_encoding(ETERM *tuplep, ETERM *method_param, lame_t lame_config, int offset);
 
 int main(int argc, char **argv) {
@@ -39,8 +40,8 @@ int main(int argc, char **argv) {
   fprintf(stdout, "\nCalling lame setup...\n\r");
   lame_config = setup();
   fprintf(stdout, "\nLame setup cmplete.\n\r");
+//Pure C encoding that works fine
 test_encode(lame_config);
-//encode_file2(lame_config, "/tmp/1.wav", "/tmp/enc_file2.mp3");
 
 
   port = atoi(argv[1]);
@@ -162,7 +163,6 @@ if (part_no > 5) part_no = 5;
   if (strncmp(ERL_ATOM_PTR(action), "mp3", 3) == 0) {
     filename = ERL_BIN_PTR(method_param);
     fprintf(stdout, "\n filename received %s", filename);
-    encode_file(lame_config, filename, "/tmp/testcase.mp3");
     fprintf(stdout, "\nLame encoding complete.\n\r");
     resp = erl_format("{cnode, ~s}", "/tmp/testcase.mp3");
   } else if (strncmp(ERL_ATOM_PTR(action), "encode", 6) == 0) {
@@ -312,5 +312,18 @@ if (part_no > 5) part_no = 5;
   fclose(pcm);
 }
 
+void print_error(const char *format, va_list ap) {
+  printf(format, ap);
+}
 
-
+lame_t setup() {
+  lame_t lame = lame_init();
+  lame_set_VBR(lame, vbr_default);
+  lame_set_in_samplerate(lame, 8000);
+  lame_set_num_channels(lame, 1);
+  lame_set_out_samplerate(lame, 8000);
+  lame_set_mode(lame, 3);
+  lame_init_params(lame);
+  lame_set_errorf(lame, print_error);
+  return lame;
+}
