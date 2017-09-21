@@ -1,5 +1,6 @@
 /* cnode_s.c */
 
+#include <string.h> /* memset */
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/types.h>
@@ -15,6 +16,7 @@
 #define EXCHANGE_BUFSIZE 8192
 
 void test_encode(lame_t lame_config);
+void write_block_to_file(char *filename, char *data, int size);
 lame_t setup();
 ETERM *process_block_encoding(ETERM *tuplep, ETERM *method_param, lame_t lame_config, int offset);
 
@@ -84,7 +86,6 @@ test_encode(lame_config);
           fprintf(stderr, "filename is not a binary");
         }
         else {
-          test_encode2(lame_config, offset);
           resp = process_block_encoding(tuplep, method_param, lame_config, offset);
           offset += EXCHANGE_BUFSIZE;
         }
@@ -150,14 +151,9 @@ if (part_no > 5) part_no = 5;
   char part_ifilename[100];
   sprintf(part_ifilename, "/tmp/elixir_i%i.wav", part_no); 
   sprintf(part_ofilename, "/tmp/elixir_o%i.mp3", part_no); 
-  sprintf(part_encfilename, "/tmp/elixir_enc%i.mp3", part_no); 
   int len, encoded_len; void *ptr;
   int write;
-  FILE *mp3_ipartial = fopen(part_ifilename, "wb");
-  FILE *mp3_opartial = fopen(part_ofilename, "wb");
-  FILE *mp3_encpartial = fopen(part_encfilename, "wb");
-  FILE *pcm = fopen("/tmp/l.wav", "ab");
-  FILE *mp3 = fopen("/tmp/l.mp3", "ab");
+  char error[200];
 
   action = erl_element(1, tuplep);
   if (strncmp(ERL_ATOM_PTR(action), "mp3", 3) == 0) {
@@ -170,47 +166,32 @@ if (part_no > 5) part_no = 5;
     len = ERL_BIN_SIZE(method_param);
     ptr = ERL_BIN_PTR(method_param);
     if ( len > EXCHANGE_BUFSIZE ) {
-      resp = erl_format("{error, ~s}", sprintf("ERR: Length of the block %i exceeds maximum size %i", len, EXCHANGE_BUFSIZE));
-      fprintf(stderr, "\n ERR: Length of the block %i exceeds maximum size %i", len, EXCHANGE_BUFSIZE);
+      sprintf(error, "ERR: Length of the block %i exceeds maximum size %i", len, EXCHANGE_BUFSIZE);
+      resp = erl_format("{error, ~s}", error);
+      fprintf(stderr, "%s", error);
       return resp;
     } else {
       memset(input_buffer, '\0', sizeof(input_buffer));
       memset(bytes_buffer, '\0', sizeof(bytes_buffer));
       memcpy(bytes_buffer, ptr, len);
       memcpy(input_buffer, ptr, len);
-      write = fwrite(bytes_buffer, len, 1, mp3_ipartial);
-//fprintf(stdout, "Data sizes, received %i short int: %i", sizeof(bytes_buffer[0]), sizeof(short int));
-      //int i;
-      //for (i = 0; i < len; i += 2)
-        //input_buffer[i/2] = bytes_buffer[i+1] | (short int)bytes_buffer[i] << 8; //big endian
-        //input_buffer[i/2] = (bytes_buffer[i] << 8) | bytes_buffer[i+1];
-        //input_buffer[i/2] = bytes_buffer[i] | (short int)bytes_buffer[i+1] << 8; //little endian
-        //input_buffer[i] = (int)bytes_buffer[i];
-      //write = fwrite(bytes_buffer, len, 1, pcm);
+      if( part_no < 5) 
+        write_block_to_file(part_ifilename, (char *)input_buffer, len);
+
       if( part_no < 3)
       if (  memcmp(input_buffer, bytes_buffer, len)) {
-        fprintf(stderr, "\n Arrays match after casting ");
+        fprintf(stderr, "\n Arrays match after casting, compared %i bytes ", len);
       } else {
-        fprintf(stderr, "\n Arrays DONT match after casting ");
+        fprintf(stderr, "\n Arrays DONT match after casting  %i bytes ", len);
       }
-      write = fwrite(input_buffer, len, 1, mp3_encpartial);
     }
-    //fprintf(stdout, "\nBlock received %i bytes", len);
     encoded_len = lame_encode_buffer(lame_config, input_buffer, input_buffer, len, output_buffer, len);
-
-    //fprintf(stdout, "\n Encoded block, result size %i bytes", encoded_len);
-    //Log to l.mp3 file
-    write = fwrite(output_buffer, encoded_len, 1, mp3);
-    write = fwrite(output_buffer, encoded_len, 1, mp3_opartial);
+    if( part_no < 5) 
+      write_block_to_file(part_ofilename, (char *)output_buffer, encoded_len);
     resp = erl_format("{cnode, ~w}", erl_mk_binary(output_buffer, encoded_len));
   }
   erl_free_term(action);
 
-  fclose(mp3);
-  fclose(mp3_opartial);
-  fclose(mp3_encpartial);
-  fclose(mp3_ipartial);
-  fclose(pcm);
   return resp;
 }
 
@@ -231,11 +212,11 @@ void test_encode(lame_t lame_config) {
     sprintf(part_ifilename, "/tmp/tef_i%i.wav", part_no); 
     sprintf(part_ofilename, "/tmp/tef_o%i.mp3", part_no); 
 
-    read = fread(input_buffer, sizeof(short int), EXCHANGE_BUFSIZE, pcm);
+    read = fread(input_buffer, 1, EXCHANGE_BUFSIZE, pcm);
     //fprintf(stdout, "Read  %i %i", read, sizeof(input_buffer));
     
     if( part_no < 5) 
-      write_block_to_file(part_ifilename, input_buffer, read);
+      write_block_to_file(part_ifilename, (char *)input_buffer, read);
 
     encoded_len = lame_encode_buffer(lame_config, input_buffer, input_buffer, EXCHANGE_BUFSIZE, output_buffer, EXCHANGE_BUFSIZE);
     write = fwrite(output_buffer, encoded_len, 1, mp3);
@@ -249,67 +230,16 @@ void test_encode(lame_t lame_config) {
   fclose(pcm);
 }
 
-void write_block_to_file(char *filename, short int data[], int size) {
-fprintf(stdout, "\nWriting block to file '%s' ", filename);
+void write_block_to_file(char *filename, char* data, int size) {
+  //fprintf(stdout, "\nWriting block to file '%s' ", filename);
   FILE *file = fopen(filename, "wb");
   if (file == NULL)
   {
-      //printf("Oh dear, something went wrong with fopen()! %s\n", strerror_r(errno));
-      printf("Oh dear, something went wrong with fopen()! \n" );
       perror( filename );
       exit(0);
   }
   fwrite(data, size, 1, file);
   fclose(file);
-}
-
-void test_encode2(lame_t lame_config, int offset) {
-  //fprintf(stdout, "\nStarting test encode2 with offset %i", offset);
-  //fprintf(stdout, "\nSetup complete");
-  int read, write, total_read, len;
-  int part_no = offset/EXCHANGE_BUFSIZE;
-if (part_no > 5) part_no = 5;
-  char part_ofilename[100];
-  char part_ifilename[100];
-  sprintf(part_ifilename, "/tmp/te_i%i.wav", part_no); 
-  sprintf(part_ofilename, "/tmp/te_o%i.mp3", part_no); 
-  //fprintf(stdout, "\nWriting part no %i ", part_no);
-  //fprintf(stdout, "\nWriting part no %i file: %s", part_no, part_filename);
-  
-  FILE *pcm = fopen("/tmp/1.wav", "rb");
-  FILE *mp3_ipartial = fopen(part_ifilename, "wb");
-  FILE *mp3_opartial = fopen(part_ofilename, "wb");
-  FILE *mp3 = fopen("/tmp/te.mp3", "ab");
-
-  short int input_buffer[EXCHANGE_BUFSIZE/2];
-  unsigned char output_buffer[EXCHANGE_BUFSIZE/2];
-  total_read = 0;
-
-  do {
-    read = fread(input_buffer, sizeof(short int), EXCHANGE_BUFSIZE/2, pcm);
-
-    //fprintf(stdout, "\nReading 1.wav in test. Read %i total read %i offset %i", read, total_read, offset);
-    if ( total_read == offset ) {
-      //fprintf(stdout, "\nDeteceted need to encode at Read %i total read %i offset %i", read, total_read, offset);
-      write = fwrite(input_buffer, read, 1, mp3_ipartial);
-      len = lame_encode_buffer(lame_config, input_buffer, input_buffer, EXCHANGE_BUFSIZE/2, output_buffer, EXCHANGE_BUFSIZE/2);
-      write = fwrite(output_buffer, len, 1, mp3);
-      write = fwrite(output_buffer, len, 1, mp3_opartial);
-      fclose(mp3);
-      fclose(mp3_ipartial);
-      fclose(mp3_opartial);
-      fclose(pcm);
-      return;
-    } else {
-      total_read += read;
-    }
-
-  } while (read != 0);
-
-  fclose(mp3);
-  fclose(mp3_opartial);
-  fclose(mp3_ipartial);
-  fclose(pcm);
 }
 
 void print_error(const char *format, va_list ap) {
@@ -327,3 +257,4 @@ lame_t setup() {
   lame_set_errorf(lame, print_error);
   return lame;
 }
+
