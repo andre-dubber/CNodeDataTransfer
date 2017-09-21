@@ -145,7 +145,6 @@ ETERM *process_block_encoding(ETERM *tuplep, ETERM *method_param, lame_t lame_co
   uint8_t bytes_buffer[EXCHANGE_BUFSIZE];
   unsigned char output_buffer[EXCHANGE_BUFSIZE/2];
   int part_no = offset/EXCHANGE_BUFSIZE;
-if (part_no > 5) part_no = 5;
   char part_ofilename[100];
   char part_encfilename[100];
   char part_ifilename[100];
@@ -169,26 +168,17 @@ if (part_no > 5) part_no = 5;
       sprintf(error, "ERR: Length of the block %i exceeds maximum size %i", len, EXCHANGE_BUFSIZE);
       resp = erl_format("{error, ~s}", error);
       fprintf(stderr, "%s", error);
-      return resp;
     } else {
-      memset(input_buffer, '\0', sizeof(input_buffer));
-      memset(bytes_buffer, '\0', sizeof(bytes_buffer));
-      memcpy(bytes_buffer, ptr, len);
-      memcpy(input_buffer, ptr, len);
-      if( part_no < 5) 
-        write_block_to_file(part_ifilename, (char *)input_buffer, len);
-
-      if( part_no < 3)
-      if (  memcmp(input_buffer, bytes_buffer, len)) {
-        fprintf(stderr, "\n Arrays match after casting, compared %i bytes ", len);
-      } else {
-        fprintf(stderr, "\n Arrays DONT match after casting  %i bytes ", len);
+      if( part_no < 5) {
+        //fprintf(stdout, "\n Received block of %i bytes ", len);
+        write_block_to_file(part_ifilename, (char *)ptr, len);
       }
+
+      encoded_len = lame_encode_buffer(lame_config, (short int *) ptr, (short int *) ptr, len, output_buffer, EXCHANGE_BUFSIZE);
+      if( part_no < 5) 
+        write_block_to_file(part_ofilename, (char *)output_buffer, encoded_len);
+      resp = erl_format("{cnode, ~w}", erl_mk_binary(output_buffer, encoded_len));
     }
-    encoded_len = lame_encode_buffer(lame_config, input_buffer, input_buffer, len, output_buffer, len);
-    if( part_no < 5) 
-      write_block_to_file(part_ofilename, (char *)output_buffer, encoded_len);
-    resp = erl_format("{cnode, ~w}", erl_mk_binary(output_buffer, encoded_len));
   }
   erl_free_term(action);
 
@@ -205,7 +195,7 @@ void test_encode(lame_t lame_config) {
   int part_no = 0;
   char part_ofilename[100];
   char part_ifilename[100];
-  short int input_buffer[EXCHANGE_BUFSIZE];
+  unsigned char input_buffer[EXCHANGE_BUFSIZE];
   unsigned char output_buffer[EXCHANGE_BUFSIZE];
 
   do {
@@ -213,12 +203,11 @@ void test_encode(lame_t lame_config) {
     sprintf(part_ofilename, "/tmp/tef_o%i.mp3", part_no); 
 
     read = fread(input_buffer, 1, EXCHANGE_BUFSIZE, pcm);
-    //fprintf(stdout, "Read  %i %i", read, sizeof(input_buffer));
     
     if( part_no < 5) 
       write_block_to_file(part_ifilename, (char *)input_buffer, read);
 
-    encoded_len = lame_encode_buffer(lame_config, input_buffer, input_buffer, EXCHANGE_BUFSIZE, output_buffer, EXCHANGE_BUFSIZE);
+    encoded_len = lame_encode_buffer(lame_config, (short int *)input_buffer, (short int *)input_buffer, read, output_buffer, EXCHANGE_BUFSIZE);
     write = fwrite(output_buffer, encoded_len, 1, mp3);
 
     if( part_no < 5) 
@@ -231,7 +220,6 @@ void test_encode(lame_t lame_config) {
 }
 
 void write_block_to_file(char *filename, char* data, int size) {
-  //fprintf(stdout, "\nWriting block to file '%s' ", filename);
   FILE *file = fopen(filename, "wb");
   if (file == NULL)
   {
@@ -243,7 +231,7 @@ void write_block_to_file(char *filename, char* data, int size) {
 }
 
 void print_error(const char *format, va_list ap) {
-  printf(format, ap);
+  fprintf(stderr, format, ap);
 }
 
 lame_t setup() {
