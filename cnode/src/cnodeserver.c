@@ -13,12 +13,16 @@
 #include "../include/encoder.h"
 
 #define BUFSIZE 1000
+#define BIT_DEPTH 16
+#define DEFAULT_CHANNEL_NO 2
 #define EXCHANGE_BUFSIZE 8192
 
 void test_encode(lame_t lame_config);
 void write_block_to_file(char *filename, char *data, int size);
-lame_t setup();
-ETERM *process_block_encoding(ETERM *tuplep, ETERM *method_param, lame_t lame_config, int offset);
+lame_t setup(int channels);
+audio_buffer *encode_block (lame_t lame_config, unsigned char *buffer[], int length, int channels);
+
+ETERM *process_block_encoding(ETERM *tuplep, ETERM *method_param, lame_t lame_mono_config, lame_t lame_stereo_config, int offset);
 
 int main(int argc, char **argv) {
   fprintf(stdout, "\nStarting up server");
@@ -33,17 +37,19 @@ int main(int argc, char **argv) {
   int got;                                 /* Result of receive */
   unsigned char buf[BUFSIZE];              /* Buffer for incoming message */
   ErlMessage emsg;                         /* Incoming message */
-  lame_t lame_config;
+  lame_t lame_mono_config;
+  lame_t lame_stereo_config;
 
   ETERM *fromp, *tuplep, *argp, *resp, *method_param;
   int res, offset;
 
   // Initialize lame config
   fprintf(stdout, "\nCalling lame setup...\n\r");
-  lame_config = setup();
+  lame_mono_config = setup(1);
+  lame_stereo_config = setup(2);
   fprintf(stdout, "\nLame setup cmplete.\n\r");
 //Pure C encoding that works fine
-test_encode(lame_config);
+test_encode(lame_mono_config);
 
 
   port = atoi(argv[1]);
@@ -86,7 +92,8 @@ test_encode(lame_config);
           fprintf(stderr, "filename is not a binary");
         }
         else {
-          resp = process_block_encoding(tuplep, method_param, lame_config, offset);
+          //fprintf(stdout, "\nCalling block encoding.\n\r");
+          resp = process_block_encoding(tuplep, method_param, lame_mono_config, lame_stereo_config, offset);
           offset += EXCHANGE_BUFSIZE;
         }
 
@@ -138,8 +145,8 @@ void print_mem(void const *vp, size_t n)
     putchar('\n');
 }
 
-ETERM *process_block_encoding(ETERM *tuplep, ETERM *method_param, lame_t lame_config, int offset) {
-  ETERM *action, *resp;
+ETERM *process_block_encoding(ETERM *tuplep, ETERM *method_param, lame_t lame_mono_config, lame_t lame_stereo_config, int offset) {
+  ETERM *action, *resp, *channel_param;
   char *filename;
   short int input_buffer[EXCHANGE_BUFSIZE/2];
   uint8_t bytes_buffer[EXCHANGE_BUFSIZE];
@@ -151,8 +158,9 @@ ETERM *process_block_encoding(ETERM *tuplep, ETERM *method_param, lame_t lame_co
   sprintf(part_ifilename, "/tmp/elixir_i%i.wav", part_no); 
   sprintf(part_ofilename, "/tmp/elixir_o%i.mp3", part_no); 
   int len, encoded_len; void *ptr;
-  int write;
+  int write, channels;
   char error[200];
+  //fprintf(stdout, "\n processing block encoding.");
 
   action = erl_element(1, tuplep);
   if (strncmp(ERL_ATOM_PTR(action), "mp3", 3) == 0) {
@@ -161,9 +169,21 @@ ETERM *process_block_encoding(ETERM *tuplep, ETERM *method_param, lame_t lame_co
     fprintf(stdout, "\nLame encoding complete.\n\r");
     resp = erl_format("{cnode, ~s}", "/tmp/testcase.mp3");
   } else if (strncmp(ERL_ATOM_PTR(action), "encode", 6) == 0) {
+    if ( ERL_IS_BINARY(method_param) ) {
+       len = ERL_BIN_SIZE(method_param);
+       ptr = ERL_BIN_PTR(method_param);
+       //fprintf(stdout, "\n Method  parameter is binary, size %i", len );
+    } else if ( ERL_IS_INTEGER(method_param) ) {
+       fprintf(stderr, "\n Data  parameter is not binary it is integer" );
+    }
+    channel_param = erl_element(3, tuplep);
+    if (channel_param) {
+      channels = ERL_INT_VALUE(channel_param);
+    } else {
+       fprintf(stderr, "\n channel parameter is null" );
+    }
+    //resp = erl_format("{cnode, ~s}", "dummy.mp3");
 
-    len = ERL_BIN_SIZE(method_param);
-    ptr = ERL_BIN_PTR(method_param);
     if ( len > EXCHANGE_BUFSIZE ) {
       sprintf(error, "ERR: Length of the block %i exceeds maximum size %i", len, EXCHANGE_BUFSIZE);
       resp = erl_format("{error, ~s}", error);
@@ -173,16 +193,68 @@ ETERM *process_block_encoding(ETERM *tuplep, ETERM *method_param, lame_t lame_co
         //fprintf(stdout, "\n Received block of %i bytes ", len);
         write_block_to_file(part_ifilename, (char *)ptr, len);
       }
+      audio_buffer *result;
+      if ( channels == 1 )
+        result = encode_block(lame_mono_config, ptr, len, channels);
+      else 
+        result = encode_block(lame_stereo_config, ptr, len, channels);
 
-      encoded_len = lame_encode_buffer(lame_config, (short int *) ptr, (short int *) ptr, len, output_buffer, EXCHANGE_BUFSIZE);
+      //encoded_len = lame_encode_buffer(lame_config, (short int *) ptr, (short int *) ptr, len, output_buffer, EXCHANGE_BUFSIZE);
       if( part_no < 5) 
-        write_block_to_file(part_ofilename, (char *)output_buffer, encoded_len);
-      resp = erl_format("{cnode, ~w}", erl_mk_binary(output_buffer, encoded_len));
+        write_block_to_file(part_ofilename, (char *)result->data, result->length);
+      resp = erl_format("{cnode, ~w}", erl_mk_binary(result->data, result->length));
     }
+
   }
   erl_free_term(action);
+  erl_free_term(channel_param);
 
   return resp;
+}
+
+audio_buffer *encode_block (lame_t lame_config, unsigned char *buffer[], int length, int channels) {
+
+
+  int block_align = BIT_DEPTH / 8 * channels;
+  int remain_bytes = length % block_align;
+
+  if (remain_bytes > 0) {
+    fprintf(stderr, "There is %i bytes reminder after block align", remain_bytes);
+  }
+
+  int num_samples = length / block_align;
+  int estimated_size = 1.25*num_samples + 7200;
+  char output_buffer[estimated_size];
+
+  int length_out; 
+  if ( channels == 1 ) {
+    length_out  = lame_encode_buffer(
+      lame_config,
+      (short int *)buffer,
+      (short int *)buffer,
+      num_samples,
+      output_buffer,
+      estimated_size
+    );
+  } else {
+    length_out = lame_encode_buffer_interleaved(
+      lame_config,
+      (short int *)buffer,
+      num_samples/2,
+      output_buffer,
+      estimated_size
+     );
+  }
+ 
+
+  audio_buffer *result = malloc(sizeof(audio_buffer));
+  result->data = output_buffer;
+  result->length = length_out;
+
+  return result;
+}
+
+void encode_file_block(lame_t lame_config, char *filename) {
 }
 
 void test_encode(lame_t lame_config) {
@@ -234,15 +306,20 @@ void print_error(const char *format, va_list ap) {
   fprintf(stderr, format, ap);
 }
 
-lame_t setup() {
+lame_t setup(int channels) {
   lame_t lame = lame_init();
   lame_set_VBR(lame, vbr_default);
   lame_set_in_samplerate(lame, 8000);
-  lame_set_num_channels(lame, 1);
+  lame_set_num_channels(lame, channels);
   lame_set_out_samplerate(lame, 8000);
-  lame_set_mode(lame, 3);
+  if ( channels == 1 ) {
+    lame_set_mode(lame, 3);
+  } else {
+    lame_set_mode(lame, 0);
+  }
   lame_init_params(lame);
   lame_set_errorf(lame, print_error);
   return lame;
 }
+
 
