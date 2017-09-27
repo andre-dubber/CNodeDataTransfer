@@ -15,7 +15,7 @@ defmodule Mp3Stream.Encoder do
     end)
   end
 
-  def detect_wav_parameters(<<"RIFF", filesize::little-integer-size(32),
+  def detect_wav_parameters(file, <<"RIFF", filesize::little-integer-size(32),
     "WAVEfmt ",
     _format_len::little-integer-size(32),
     _pcm_format::little-integer-size(16),
@@ -23,14 +23,39 @@ defmodule Mp3Stream.Encoder do
     sample_rate::little-integer-size(32),
     bytes_per_second::little-integer-size(32),
     _block_align::little-integer-size(16),
-    _bits_per_sample::little-integer-size(16),
+    bits_per_sample::little-integer-size(16),
     "data",
     contents::binary>>) do
-    %{channels: channels, filesize: filesize, bytes_per_second: bytes_per_second, sample_rate: sample_rate, contents: contents}
-    #<<"RIFF", filesize::bytes-size(5), "WAVEfmt ", format_len::little-integer-size(32), pcm_format::little-integer-size(16), channels::little-integer-size(16), sample_rate::little-integer-size(32), bytes_per_second::little-integer-size(32), block_alisgn::little-integer-size(16), bits_per_sample::little-integer-size(16), "data",  contents::binary>> = header
+    {file, %{channels: channels, filesize: filesize, bytes_per_second: bytes_per_second, sample_rate: sample_rate, bits_per_sample: bits_per_sample, contents: contents}}
   end
+  def detect_wav_parameters(file, <<"RIFF", filesize::little-integer-size(32),
+    "WAVEfmt ",
+    _format_len::little-integer-size(32),
+    _pcm_format::little-integer-size(16),
+    channels::little-integer-size(16),
+    sample_rate::little-integer-size(32),
+    bytes_per_second::little-integer-size(32),
+    _block_align::little-integer-size(16),
+    bits_per_sample::little-integer-size(16),
+    "LIST",
+    info_size::little-integer-size(16),
+    contents::binary>>) do
+    #IO.puts("Leftover from initial read #{inspect contents}")
+    #IO.puts("Information block size detected #{inspect info_size}")
+    #<<list_chunk::binary-size(info_size), "data">> = IO.binread(file, info_size + 4)
+    extra_header = contents <> IO.binread(file, info_size+4)
+    list_header_size = info_size + 2
+    #IO.puts("list header size detected #{inspect list_header_size}")
+    #IO.puts("Read extra header size #{inspect byte_size(extra_header)} #{inspect Base.encode16(extra_header)}")
+    <<list_chunk::binary-size(list_header_size), "data">> = extra_header
+    #IO.puts("Data after information block  #{inspect extra_contents}")
 
-  def detect_wav_parameters(invalid_data) do
+
+    IO.puts("Data from list block #{to_string list_chunk}")
+    {file, %{channels: channels, filesize: filesize, bytes_per_second: bytes_per_second, sample_rate: sample_rate, bits_per_sample: bits_per_sample, contents: contents}}
+  end
+#<<"RIFF", filesize::little-integer-size(32),"WAVEfmt ",format_len::little-integer-size(32),pcm_format::little-integer-size(16),channels::little-integer-size(16),sample_rate::little-integer-size(32),bytes_per_second::little-integer-size(32),_block_align::little-integer-size(16),bits_per_sample::little-integer-size(16), "LIST", extra_size::little-integer-size(16),list_chunk::byte-size(114+2), "data", contents::binary>> = header
+  def detect_wav_parameters(file, invalid_data) do
     require Logger
     Logger.error("Unrecognzied wav file format, header #{inspect invalid_data}")
   end
@@ -45,9 +70,7 @@ defmodule Mp3Stream.Encoder do
       fn ->
         file = File.open!(path)
         header = IO.binread(file, 44)
-        stats = detect_wav_parameters(header)
-        #IO.puts("Read stats: #{inspect stats}")
-        {file, stats}
+        detect_wav_parameters(file, header)
       end,
       fn {file, stats} ->
         case IO.binread(file, @file_chunk_size) do

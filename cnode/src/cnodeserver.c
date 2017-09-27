@@ -14,7 +14,6 @@
 
 #define BUFSIZE 1000
 #define BIT_DEPTH 16
-#define DEFAULT_CHANNEL_NO 2
 #define EXCHANGE_BUFSIZE 8192
 
 void test_encode(lame_t lame_config);
